@@ -12,7 +12,7 @@ RUN \
     apt-get update \
     && apt-get install -y --no-install-recommends \
         libnginx-mod-http-set-misc=0.33-6 \
-        nginx-light=1.26.3-3+deb13u7 \
+        nginx-light=1.26.3-3+deb13u9 \
         procps=2:4.0.4-9 \
     \
     && rm -f -r /etc/nginx \
