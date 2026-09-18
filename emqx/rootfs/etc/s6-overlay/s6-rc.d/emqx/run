@@ -9,6 +9,7 @@ declare node_cookie
 declare node_name
 
 readonly dashboard_bind="127.0.0.1:18081"
+readonly dashboard_status_url="http://${dashboard_bind}/api/v5/status"
 readonly default_node_name="emqx@127.0.0.1"
 readonly ipv4_octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
 readonly mnesia_dir="/data/emqx/data/mnesia"
@@ -72,6 +73,63 @@ resolve_node_cookie() {
     od -vAn -tx1 -N32 /dev/urandom | tr -d ' \n'
 }
 
+# Dashboard users created on EMQX 5.2 or older were stored without a role,
+# which EMQX 5 read as administrator. EMQX 6 derives what a login user may
+# manage from the stored role and treats a missing one as "not an
+# administrator", so those users, the default admin among them, are refused
+# user and API key management:
+#
+#     {"code":"UNAUTHORIZED_ROLE","message":"Login user scope does not permit this endpoint"}
+#
+# The role EMQX 5 assumed is written out once the node is up.
+#
+# https://github.com/hassio-addons/app-emqx/issues/177
+repair_dashboard_roles_expr=$(cat <<'EOF'
+    case mria:transaction(emqx_dashboard_shard, fun() ->
+        Missing = {emqx_admin, '_', '_', '_', undefined, '_'},
+        [begin
+            ok = mnesia:write(emqx_admin, setelement(5, User, <<"administrator">>), write),
+            element(2, User)
+        end || User <- mnesia:match_object(emqx_admin, Missing, write)]
+    end) of
+        {atomic, Usernames} -> iolist_to_binary(lists:join(<<" ">>, Usernames));
+        {aborted, Reason} -> error(Reason)
+    end.
+EOF
+)
+readonly repair_dashboard_roles_expr
+
+repair_dashboard_roles() {
+    local attempt
+    local usernames
+
+    for attempt in $(seq 1 150); do
+        if curl -sf -o /dev/null "${dashboard_status_url}"; then
+            break
+        fi
+        if [[ "${attempt}" -eq 150 ]]; then
+            bashio::log.warning \
+                "EMQX did not come up in time to check the dashboard user roles"
+            return
+        fi
+        sleep 2
+    done
+
+    if ! usernames=$(/opt/emqx/bin/emqx eval "${repair_dashboard_roles_expr}" 2>&1); then
+        bashio::log.warning "Could not check the dashboard user roles: ${usernames}"
+        return
+    fi
+
+    # The result is printed as an Erlang binary, <<"admin">> or <<>>
+    usernames="${usernames#<<}"
+    usernames="${usernames%>>}"
+    usernames="${usernames//\"/}"
+    if [[ -n "${usernames}" ]]; then
+        bashio::log.info \
+            "Restored the administrator role of dashboard user(s): ${usernames}"
+    fi
+}
+
 bashio::log.info 'Starting EMQX...'
 
 node_name=$(resolve_node_name)
@@ -130,6 +188,10 @@ bashio::log.info "Using EMQX node name: ${EMQX_NODE__NAME}"
 if [ "$(ulimit -Hn)" -gt 524288 ]; then
     ulimit -n 524288
 fi
+
+# Runs beside EMQX with the environment EMQX was started with, which is what
+# `emqx eval` needs to find the node.
+repair_dashboard_roles &
 
 # Run EMQX
 exec /opt/emqx/bin/emqx foreground
