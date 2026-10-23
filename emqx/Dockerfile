@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:9.5.0
+ARG BUILD_FROM=ghcr.io/hassio-addons/debian-base:9.5.1
 # hadolint ignore=DL3006
 FROM ${BUILD_FROM}
 
@@ -12,7 +12,7 @@ RUN \
     apt-get update \
     && apt-get install -y --no-install-recommends \
         libnginx-mod-http-set-misc=0.33-6 \
-        nginx-light=1.26.3-3+deb13u9 \
+        nginx-light=1.26.3-3+deb13u10 \
         procps=2:4.0.4-9 \
     \
     && rm -f -r /etc/nginx \
